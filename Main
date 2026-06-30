@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Gramoire — An Actual Good Instagram Downloader
-// @version      1.6.8
+// @version      1.6.9
 // @description  Bulk download Instagram profiles with safe pacing, ZIP exports, and custom file naming. Or, right-click to save individual high-res posts, reels, stories, highlights, and profile pictures.
 // @author       sprtnq
 // @license      LicenseRef-Gramoire-NonCommercial-1.0
@@ -109,6 +109,23 @@ const UTILITIES_CORE = (() => {
     }
   }
 
+  function isIOSUserAgent() {
+    try {
+      const ua = String(navigator?.userAgent || "");
+      const platform = String(navigator?.platform || "");
+      const maxTouchPoints = Number(navigator?.maxTouchPoints || 0);
+      return /iPhone|iPad|iPod/i.test(ua)
+        || /iPhone|iPad|iPod/i.test(platform)
+        || (platform === "MacIntel" && maxTouchPoints > 1);
+    } catch {
+      return false;
+    }
+  }
+
+  function isMobileUserAgent() {
+    return isAndroidUserAgent() || isIOSUserAgent();
+  }
+
   function computeSettingsTooltipPosition(anchorRect, tooltipRect, viewportWidth, viewportHeight) {
     const safeAnchorRect = anchorRect && typeof anchorRect === "object" ? anchorRect : {};
     const safeTooltipRect = tooltipRect && typeof tooltipRect === "object" ? tooltipRect : {};
@@ -149,6 +166,8 @@ const UTILITIES_CORE = (() => {
     createDebugLogger,
     getPageWindow,
     isAndroidUserAgent,
+    isIOSUserAgent,
+    isMobileUserAgent,
     computeSettingsTooltipPosition
   };
 })();
@@ -499,8 +518,13 @@ const CONTEXT_MENU_CORE = (() => {
     currentMenu = menu;
 
     const rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 10}px`;
-    if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 10}px`;
+    const viewportWidth = Math.max(0, window.innerWidth || document.documentElement?.clientWidth || 0);
+    const viewportHeight = Math.max(0, window.innerHeight || document.documentElement?.clientHeight || 0);
+    const safeMargin = 10;
+    const nextLeft = Math.min(Math.max(safeMargin, x), Math.max(safeMargin, viewportWidth - rect.width - safeMargin));
+    const nextTop = Math.min(Math.max(safeMargin, y), Math.max(safeMargin, viewportHeight - rect.height - safeMargin));
+    menu.style.left = `${Math.round(nextLeft)}px`;
+    menu.style.top = `${Math.round(nextTop)}px`;
   }
 
   function getCurrentMenu() {
@@ -6174,7 +6198,75 @@ const DOWNLOAD_PIPELINE_CORE = (() => {
       opacity: 1;
       cursor: not-allowed;
     }
+    @supports (-webkit-touch-callout: none) {
+      #ig-hd-context-menu,
+      #ig-hd-settings-modal,
+      #ig-hd-batch-progress,
+      #ig-hd-settings-launcher {
+        -webkit-tap-highlight-color: transparent;
+      }
+      #ig-hd-settings-modal {
+        max-height: min(92dvh, 920px);
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+      }
+      #ig-hd-context-menu {
+        max-width: calc(100vw - 20px);
+        max-height: calc(100dvh - 20px);
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .ig-hd-menu-item,
+      .ig-hd-settings-tab,
+      .ig-hd-settings-close,
+      .ig-hd-download-btn,
+      .gm-btn,
+      .gm-ctrl,
+      .gm-menu-item {
+        min-height: 44px;
+      }
+      .ig-hd-settings-input,
+      .ig-hd-settings-select,
+      .ig-hd-pattern-editor-input,
+      .ig-hd-export-folder-input {
+        font-size: 16px;
+      }
+    }
     @media (max-width: 700px) {
+      #ig-hd-settings-overlay {
+        align-items: stretch;
+        justify-content: stretch;
+        padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+      }
+      #ig-hd-settings-modal {
+        width: 100%;
+        max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
+        border-radius: 16px;
+      }
+      .ig-hd-settings-header {
+        grid-template-columns: 1fr auto;
+        padding: 14px 16px 10px;
+      }
+      .ig-hd-settings-version {
+        display: none;
+      }
+      .ig-hd-settings-title {
+        justify-self: start;
+      }
+      .ig-hd-settings-tabs {
+        top: 45px;
+        overflow-x: auto;
+        padding: 0 12px;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+      }
+      .ig-hd-settings-tabs::-webkit-scrollbar { display: none; }
+      .ig-hd-settings-tab {
+        padding: 12px 14px;
+      }
+      .ig-hd-settings-body {
+        padding: 16px;
+      }
       .ig-hd-settings-row.two-col {
         grid-template-columns: 1fr;
       }
@@ -6372,6 +6464,14 @@ const DOWNLOAD_PIPELINE_CORE = (() => {
 
   function isAndroidUserAgent() {
     return UTILITIES_CORE.isAndroidUserAgent();
+  }
+
+  function isIOSUserAgent() {
+    return UTILITIES_CORE.isIOSUserAgent();
+  }
+
+  function isMobileUserAgent() {
+    return UTILITIES_CORE.isMobileUserAgent();
   }
 
   const SETTINGS_STORAGE_KEY = "IG_HD_USER_SETTINGS_V1";
@@ -13384,6 +13484,10 @@ const DOWNLOAD_PIPELINE_CORE = (() => {
     return !!USER_SETTINGS?.downloads?.androidCompatMode && isAndroidUserAgent();
   }
 
+  function shouldUseMobileCompatibilityDownloadPath() {
+    return !!USER_SETTINGS?.downloads?.androidCompatMode && isMobileUserAgent();
+  }
+
   function isDownloadTimeoutError(err) {
     return !!err && (err.code === "GM_DOWNLOAD_TIMEOUT" || String(err?.message || "").toLowerCase().includes("timed out"));
   }
@@ -13403,7 +13507,7 @@ const DOWNLOAD_PIPELINE_CORE = (() => {
 
     const resolvedFilename = resolveDownloadFilenameForTransfer(url, filename, meta);
 
-    if (shouldUseAndroidCompatibilityDownloadPath()) {
+    if (shouldUseMobileCompatibilityDownloadPath()) {
       const androidAllowsTabFallback = options?.allowOpenInTabFallback !== false;
       let initialDownloadErr = null;
       try {
@@ -13420,7 +13524,7 @@ const DOWNLOAD_PIPELINE_CORE = (() => {
       if (isDownloadTimeoutError(initialDownloadErr)) {
         debugLog("[Gramoire] Android mode timeout treated as submitted request; skipping extra fallback attempts to avoid duplicate downloads.");
         if (androidAllowsTabFallback) {
-          showToast("Android mode: download request sent. If no file appears, use Open in new tab once.");
+          showToast(`${isIOSUserAgent() ? "iPhone" : "Android"} mode: download request sent. If no file appears, use Open in new tab once.`);
         }
         return true;
       }
@@ -13483,7 +13587,7 @@ const DOWNLOAD_PIPELINE_CORE = (() => {
 
       if (androidAllowsTabFallback) {
         openInNewTab(url);
-        showToast("Android mode: opened media in a new tab. Use the browser download option there.");
+        showToast(`${isIOSUserAgent() ? "iPhone" : "Android"} mode: opened media in a new tab. Use Share/Save there.`);
         return true;
       }
       return false;
@@ -23457,7 +23561,7 @@ const STORY_MATCHING_CORE = (() => {
   // =========================================
   // INIT WIRING AND GLOBAL RIGHT-CLICK LISTENER
   // =========================================
-  document.addEventListener("contextmenu", async (e) => {
+  async function handleGramoireContextMenu(e) {
     // Bypass: Shift + Ctrl/Cmd + right-click hands the event to the
     // browser's native context menu (e.g. for "Open link in new tab").
     if (e.shiftKey && (e.ctrlKey || e.metaKey)) {
@@ -23505,7 +23609,66 @@ const STORY_MATCHING_CORE = (() => {
 
     // Handle posts
     await handlePostRightClick(e);
-  }, true);
+  }
+
+  document.addEventListener("contextmenu", handleGramoireContextMenu, true);
+
+  // iPhone/iPad Safari-style userscript managers do not always deliver a
+  // useful right-click/contextmenu gesture. Add a touch-only long-press bridge
+  // so the existing, full-featured menu path stays available without removing
+  // desktop behavior or Instagram's normal taps/swipes.
+  let mobileContextTouchTimer = null;
+  let mobileContextTouchStart = null;
+  function clearMobileContextTouchTimer() {
+    if (mobileContextTouchTimer) {
+      clearTimeout(mobileContextTouchTimer);
+      mobileContextTouchTimer = null;
+    }
+    mobileContextTouchStart = null;
+  }
+  document.addEventListener("touchstart", (event) => {
+    if (!isMobileUserAgent()) return;
+    if (event.touches.length !== 1) return;
+    if (document.getElementById("ig-hd-settings-overlay")) return;
+    const target = event.target;
+    if (!target || target.closest?.("#ig-hd-context-menu,#ig-hd-settings-launcher,#ig-hd-batch-progress")) return;
+    const touch = event.touches[0];
+    mobileContextTouchStart = {
+      x: touch.clientX,
+      y: touch.clientY,
+      target
+    };
+    mobileContextTouchTimer = setTimeout(() => {
+      const start = mobileContextTouchStart;
+      clearMobileContextTouchTimer();
+      if (!start?.target?.dispatchEvent) return;
+      try {
+        if (navigator?.vibrate) navigator.vibrate(10);
+      } catch {
+        // Ignore haptic failures.
+      }
+      const contextEvent = new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: start.x,
+        clientY: start.y,
+        button: 2,
+        buttons: 2
+      });
+      contextEvent.__gramoireTouchLongPress = true;
+      start.target.dispatchEvent(contextEvent);
+    }, 620);
+  }, { passive: true, capture: true });
+  document.addEventListener("touchmove", (event) => {
+    if (!mobileContextTouchStart || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    if (Math.hypot(touch.clientX - mobileContextTouchStart.x, touch.clientY - mobileContextTouchStart.y) > 12) {
+      clearMobileContextTouchTimer();
+    }
+  }, { passive: true, capture: true });
+  document.addEventListener("touchend", clearMobileContextTouchTimer, { passive: true, capture: true });
+  document.addEventListener("touchcancel", clearMobileContextTouchTimer, { passive: true, capture: true });
 
   if (typeof window !== "undefined") {
     window.__gramoire_media_diagnostics = function getGramoireMediaDiagnostics() {
